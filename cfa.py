@@ -102,17 +102,17 @@ def adsr(wave, a, d, s, r):
     shape = array('f', shape_a + shape_d + shape_s + shape_r)
     return array('f', [x*s for x,s in zip(wave, shape)])
 
-def make_noise(wave, mp3=None):
-    "plays and saves a wave"
+def make_noise(wave, mp3=None, noisy=True):
+    "plays/saves a wave"
     clip = 2**15 - 1
     w_peak = max(max(wave), abs(min(wave)))
     scale = clip / w_peak
     s = array('i', [int(i*scale) for i in wave])
-    #snd.play(s)
-    if mp3 is None:
-        mp3 = 'cfa.mp3'
-    mp3_dump(mp3, s)
-    #wave_dump('cfa.wav', s)
+    if noisy:
+        snd.play(s)
+    if mp3 is not None:
+        mp3_dump(mp3, s)
+        #wave_dump('cfa.wav', s)
 
 def loadfile(path):
     "for samples"
@@ -137,7 +137,6 @@ def inherit_arg(parent_tuple, child_tuple):
 
 def repeat(sample, loop, duration,  fill):
     "not always safe, can not call() new random waveforms"
-    base = []
     def new_sample():
         if type(sample) == type(array('f', [])):
             return sample
@@ -145,6 +144,8 @@ def repeat(sample, loop, duration,  fill):
             return None
     base = new_sample()
     reps = 1
+    #if len(sample) == 0:
+    #    return base
     if loop == 'time':
         reps = (duration - len(base)/float(sample_rate)) / (len(base)/float(sample_rate))
     if loop == 'count':
@@ -168,21 +169,23 @@ class Rule(object):
     def __init__(self, **kwargs):  # name = ('op', value)
         stock = { 'name':('',None), 'path':('', None),
                   'frequency':('',0), 'amplitude':('',1.0), 'harmonic':('',0), 
-                  'loop':('','count'), 'duration':('',1), 'fill':('','new'), 
-                  'a':('',0), 'd':('',0), 's':('',1), 'r':('',0) }
+                  'loop':('','time'), 'duration':('',1), 'fill':('','clone'), 
+                  'a':('',0), 'd':('',0), 's':('',1), 'r':('',0) , 'cp':('',None)}
         for name in stock:
             setattr(self, name, stock[name])
         for name in kwargs:
             setattr(self, name, kwargs[name])
     def show(self):
-        print self.name, self.frequency, self.amplitude
+        print self.name, self.frequency, self.amplitude, self.cp
     def wave(self):
         "returns the associated sin wave or sample wave"
         base = array('f', [])
-        if self.name[1] == 'sin' or self.path[1] is None or self.path[1] == '':
+        if self.name[1] == 'sin':
             base = sin_builder(self.frequency[1], amp=self.amplitude[1], harmonic=self.harmonic[1])
-        else:
+        if self.name[1] == 'path':
             base = loadfile(self.path[1])
+        if self.name[1] == 'none':
+            pass
         return base
     def recurse(self, sub_rule=None):
         "build a new Rule by combining parent and child"
@@ -200,6 +203,7 @@ class Rule(object):
                     loop       = inherit_arg(self.loop,      sub_rule.loop),
                     duration   = inherit_arg(self.duration,  sub_rule.duration),
                     fill       = inherit_arg(self.fill,      sub_rule.fill),
+                    #cp         = inherit_arg(self.cp,        sub_rule.cp),  inheriting cp yeilds infinite loops
                     a          = inherit_arg(self.a,         sub_rule.a),
                     d          = inherit_arg(self.d,         sub_rule.d),
                     s          = inherit_arg(self.s,         sub_rule.s),
@@ -209,9 +213,9 @@ class Rulebook:
     "hold a bunch of rules"
     def __init__(self):
         "set up stock system rules"
-        self.book = {'sin' : None, 'sample' : None}
+        self.book = {'sin':None, 'sample':None, 'none':None}
     def add(self, name, rule):
-        if name in ['sin', 'sample']:
+        if name in ['sin', 'sample', 'none']:
             return
         if name not in self.book:
             self.book[name] = []
@@ -222,7 +226,8 @@ class Rulebook:
         instructions = random.choice(self.book[name])
         waveform_p = array('f', [])
         waveform_s = array('f', [])
-        subwave  = array('f', [])
+        subwave    = array('f', [])
+        subwave_cp = array('f', [])
         for parallel_i in instructions:
             waveform_s = array('f', [])
             for serial_i in parallel_i:
@@ -232,8 +237,8 @@ class Rulebook:
                 if j is None:
                     continue
                 # conditions when repeat() is safe
-                if j.fill[1] in ['clone', 'quiet'] or j.name[1] in ['sin', 'sample']:
-                    if j.name[1] in ['sin', 'sample']:
+                if j.fill[1] in ['clone', 'quiet'] or j.name[1] in ['sin', 'sample', 'none']:
+                    if j.name[1] in ['sin', 'sample', 'none']:
                         subwave = j.wave()
                     else:
                         subwave = self.call(j.name[1], j)
@@ -250,6 +255,9 @@ class Rulebook:
                     if j.loop[1] == 'count':
                         for i in range(j.duration[1] - 1):
                             subwave.extend(self.call(j.name[1], j))
+                if j.cp[1] is not None:
+                    subwave_cp = self.call(j.cp[1], j)
+                    subwave = array('f', [a+b for a,b in safe_zip(subwave, subwave_cp)])
                 subwave = adsr(subwave, j.a[1], j.d[1], j.s[1], j.r[1])
                 waveform_s.extend(subwave)
             waveform_p = array('f', [a+b for a,b in safe_zip(waveform_s, waveform_p)])
@@ -273,9 +281,10 @@ def string_to_ast(s):
     L = Literal
     word = Word(alphas + '_')
     number = Word('-1234567890.')
-    variable_name = (L('frequency') ^ L('amplitude') ^ L('harmonic') ^ L('loop') ^ L('duration') ^ L('fill') ^ L('path') ^ L('a') ^ L('d') ^ L('s') ^ L('r'))
+    #path = ???
+    variable_name = (L('frequency') ^ L('amplitude') ^ L('harmonic') ^ L('loop') ^ L('duration') ^ L('fill') ^ L('path') ^ L('cp') ^ L('a') ^ L('d') ^ L('s') ^ L('r'))
     op_type = Word('=+*', exact=1)
-    variable_value = (L('time') ^ L('count') ^ L('new') ^ L('clone') ^ L('quiet') ^ number)  # shoddy, no place for sample paths
+    variable_value = (L('time') ^ L('count') ^ L('new') ^ L('clone') ^ L('quiet') ^ number ^ word)  # shoddy, no place for sample paths
     set_var = Group(variable_name + op_type + variable_value)
     target_rule = word
     rule_contents = Group(target_rule + L('(').suppress() + Group(ZeroOrMore(set_var)) + L(')').suppress())
@@ -287,7 +296,11 @@ def string_to_ast(s):
     for line in s2:
         line = line.strip()
         if line == '': continue
-        ast.append(rule.parseString(line))
+        try:
+            ast.append(rule.parseString(line))
+        except:
+            print 'FAILED ON: ' + line
+            raise
     return ast
 
 def typify(s):
@@ -334,13 +347,36 @@ a = sin()
   | a(amplitude*0.25 harmonic+4)
 no_shape = a(a=0 d=0 s=1 r=0)
 """
-def example():
-    rb = ast_to_rulebook(string_to_ast(example_string))
-    make_noise(rb.call('startsound'))
+
+ex_cps = """
+startsound = c(duration=0.5 cp=organ) d(duration=0.5 cp=organ) e(duration=0.5 cp=organ)
+organ = shaped(harmonic=1 cp=overtones)
+overtones = tone()
+          | overtones(amplitude*0.5 harmonic+4)
+tone = sin(a=0 d=0 s=1 r=0)
+shaped = none(a=0.1 d=0.1 s=0.5 r=0.1)
+c = none(frequency=261.63)
+d = none(frequency=293.66)
+e = none(frequency=329.63)
+f = none(frequency=349.23)
+g = none(frequency=392.00)
+a = none(frequency=440.00)
+b = none(frequency=493.88)
+"""
+
+
+def example(a_string=None):
+    if a_string is None:
+        a_string = example_string
+    print a_string + '\n\n'
+    rb = ast_to_rulebook(string_to_ast(a_string))
+    make_noise(rb.call('startsound'), mp3=None, noisy=True)
 
 def main(argv=None):
     if argv is None:
         argv = sys.argv
+    if len(argv) == 1:
+        sys.exit(example())
     source_f = open(argv[1])
     target_f = argv[2]
     source_t = ''.join(source_f.readlines())
