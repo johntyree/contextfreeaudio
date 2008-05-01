@@ -8,33 +8,71 @@
 import sys, time, math, wave, random
 from array import array  # twice as fast as plain lists
 
+"""
 try:
     import pymedia.audio.sound as sound
     import pymedia.audio.acodec as acodec
     import pymedia.muxer as muxer
 except:
-    print "Please install PyMedia."
-    print "(or fix wave_dump())"
-    raise
+    print "Please install PyMedia for mp3 output."
+"""
 
 pi = math.pi
 sin = math.sin
 
-format = sound.AFMT_S16_LE
 sample_rate = 48000
 channels = 1
-snd = None
-snd = sound.Output(sample_rate, channels, format)
 
 def wave_dump(path, s):
     # doesn't depend on pymedia, but doesn't seem to write more than 1 second
     fw = wave.open(path, 'wb')
     fw.setparams((channels, 2, sample_rate, 0, 'NONE',''))
-    fw.writeframes(s)
+    for i in range(1000, len(s), 1000):
+        print i
+        s2 = s[i-1000: i]
+        fw.writeframesraw(s2)
+    fw.writeframesraw(s[i:])
     fw.close()
 
+def wave_dump_hack(path, s):
+    # rolled by own
+    # format info from http://technology.niagarac.on.ca/courses/ctec1631/WavFileFormat.html
+    def byte_pad(n, bytes):
+        assert n < 2**(bytes*8)
+        s = ''
+        for i in range(bytes):
+            s = chr(n%256) + s
+            n = n / 256
+        return s[::-1]  # fix endian
+    data_len = 2 * len(s)
+    pack_len = 36 + data_len
+    fw = open(path, 'wb')
+    # RIFF chunk
+    fw.write('RIFF')
+    fw.write(byte_pad(pack_len, 4))
+    fw.write('WAVE')
+    # FORMAT chunk
+    fw.write('fmt ')
+    fw.write(byte_pad(0x10, 4))
+    fw.write(byte_pad(0x01, 2))
+    fw.write(byte_pad(channels, 2))
+    fw.write(byte_pad(channels*sample_rate, 4))
+    fw.write(byte_pad(channels*sample_rate*2, 4))
+    fw.write(byte_pad(2, 2))
+    fw.write(byte_pad(16, 2))
+    # DATA chunk
+    fw.write('data')
+    fw.write(byte_pad(data_len, 4))
+    for i in s:
+        fw.write(byte_pad(i, 2))
+    fw.close()
+    
+"""
 def mp3_dump(path, s):
     # still no clue why this inserts zeros and halves playpack
+    format = sound.AFMT_S16_LE
+    snd = sound.Output(sample_rate, channels, format)
+    snd.play(s)
     params = {'id': acodec.getCodecID('mp3'),
               'bitrate': 128000,
               'sample_rate': sample_rate,
@@ -56,6 +94,7 @@ def mp3_dump(path, s):
         if ss:
             fw.write(ss)
     fw.close()
+"""
 
 def frange(start, stop, step):
     "floating range with adjustable step size"
@@ -108,11 +147,11 @@ def make_noise(wave, mp3=None, noisy=True):
     w_peak = max(max(wave), abs(min(wave)))
     scale = clip / w_peak
     s = array('i', [int(i*scale) for i in wave])
-    if noisy:
-        snd.play(s)
+    #if noisy:
+    #    snd.play(s)
     if mp3 is not None:
-        mp3_dump(mp3, s)
-        #wave_dump('cfa.wav', s)
+        #mp3_dump(mp3, s)
+        wave_dump(mp3, s)
 
 def loadfile(path):
     "for samples"
@@ -348,7 +387,7 @@ a = sin()
 no_shape = a(a=0 d=0 s=1 r=0)
 """
 
-ex_cps = """
+example_continuation = """
 startsound = c(duration=0.5 cp=organ) d(duration=0.5 cp=organ) e(duration=0.5 cp=organ)
 organ = shaped(harmonic=1 cp=overtones)
 overtones = tone()
@@ -370,7 +409,7 @@ def example(a_string=None):
         a_string = example_string
     print a_string + '\n\n'
     rb = ast_to_rulebook(string_to_ast(a_string))
-    make_noise(rb.call('startsound'), mp3=None, noisy=True)
+    make_noise(rb.call('startsound'), mp3='test.wav', noisy=True)
 
 def main(argv=None):
     if argv is None:
