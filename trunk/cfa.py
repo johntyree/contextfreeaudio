@@ -141,7 +141,7 @@ def adsr(wave, a, d, s, r):
     shape = array('f', shape_a + shape_d + shape_s + shape_r)
     return array('f', [x*s for x,s in zip(wave, shape)])
 
-def make_noise(wave, mp3=None, noisy=True):
+def make_noise(wave, wav=None, noisy=True):
     "plays/saves a wave"
     clip = 2**15 - 1
     w_peak = max(max(wave), abs(min(wave)))
@@ -149,9 +149,10 @@ def make_noise(wave, mp3=None, noisy=True):
     s = array('i', [int(i*scale) for i in wave])
     #if noisy:
     #    snd.play(s)
-    if mp3 is not None:
+    if wav is not None:
         #mp3_dump(mp3, s)
-        wave_dump(mp3, s)
+        #wave_dump(wav, s)
+        wave_dump_hack(wav, s)
 
 def loadfile(path):
     "for samples"
@@ -404,18 +405,67 @@ b = none(frequency=493.88)
 """
 
 
-def example(a_string=None):
+def example(a_string=None, wav=None):
     if a_string is None:
         a_string = example_string
-    print a_string + '\n\n'
+    if wav is None:
+        wave = 'test.wav'
+    print a_string + '\n'
     rb = ast_to_rulebook(string_to_ast(a_string))
-    make_noise(rb.call('startsound'), mp3='test.wav', noisy=True)
+    make_noise(rb.call('startsound'), wav, noisy=True)
+
+tests = [ 
+('Single sine', 
+"""startsound = sin(frequency=440 harmonic=1 duration=1)"""),
+
+('Nested calls', 
+"""startsound = first()
+first = second()
+second = sin(frequency=440 harmonic=1 duration=1)"""),
+
+('Nested passing', 
+"""startsound = first(frequency=440 harmonic=1 duration=1)
+first = second()
+second = sin()"""),
+
+('Sequential sounds', 
+"""startsound = sin(frequency=440 harmonic=1 duration=1 fill=clone) sin(frequency=880 harmonic=1 duration=1)"""),
+
+('Parallel sounds', 
+"""startsound = sin(frequency=440 harmonic=1 duration=1) 
+           | sin(frequency=880 harmonic=1 duration=1)"""),
+
+('ADSR shaping', 
+"""startsound = sin(frequency=440 harmonic=1 duration=1 a=0.2 d=0.2 s=0.3 r=0.2)"""),
+
+('Recursion', 
+"""startsound = o(frequency=440 harmonic=1 duration=1) 
+o = sin()
+  | o(harmonic+2)"""),
+
+('Probabilistic', 
+"""startsound = o() o() o() o() o()
+o = sin(frequency=440 harmonic=1 duration=0.2)
+o = sin(frequency=880 harmonic=1 duration=0.2)""")
+  
+]
+
+
+def testsuite():
+    for i, test in enumerate(tests):
+        title, cfa = test
+        output = 'test_' + str(i) + '.wav'
+        print output + ':  ' + title
+        example(cfa, output)
 
 def main(argv=None):
     if argv is None:
         argv = sys.argv
     if len(argv) == 1:
         sys.exit(example())
+    if argv[1] == 'testsuite':
+        testsuite()
+        sys.exit()
     source_f = open(argv[1])
     target_f = argv[2]
     source_t = ''.join(source_f.readlines())
